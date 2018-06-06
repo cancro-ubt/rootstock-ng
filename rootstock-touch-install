@@ -44,11 +44,16 @@ convert_android_img()
 		simg2img $SYSIMG $WORKDIR/system.img.raw
 		mkdir $TMPMOUNT
 		mount -t ext4 -o loop $WORKDIR/system.img.raw $TMPMOUNT
-		make_ext4fs -l 120M $WORKDIR/system.img $TMPMOUNT >/dev/null 2>&1
+		make_ext4fs -l 250M $WORKDIR/system.img $TMPMOUNT >/dev/null 2>&1
 		SYSIMAGE=$WORKDIR/system.img
 	else
 		SYSIMAGE=$SYSIMG
 	fi
+}
+
+send_busybox() {
+	adb push "$BUSYBOX_PUSH" "/data/"
+	BUSYBOX="/data/`basename $BUSYBOX_PUSH`"
 }
 
 check_mounts(){
@@ -64,7 +69,6 @@ check_mounts(){
 
 prepare_ubuntu_system()
 {
-	do_shell "rm -f /data/ubuntu.img"
 	do_shell "rm -f /data/system.img"
 	for data in system android; do
 		do_shell "rm -rf /data/$data-data"
@@ -75,17 +79,18 @@ prepare_ubuntu_system()
 		echo -n "keep option set, keeping user data ... "
 	fi
 
-	do_shell "dd if=/dev/zero of=/data/ubuntu.img seek=500K bs=4096 count=0 >/dev/null 2>&1"
-	do_shell "mkfs.ext2 -F /data/ubuntu.img >/dev/null 2>&1"
+	do_shell "dd if=/dev/zero of=/data/system.img seek=500K bs=4096 count=0 >/dev/null 2>&1"
+	do_shell "mkfs.ext2 -F /data/system.img >/dev/null 2>&1"
 	do_shell "mkdir -p /cache/system"
-	do_shell "mount -o loop /data/ubuntu.img /cache/system/"
+	do_shell "mount -o loop /data/system.img /cache/system/"
 
 	# system.img is the deprecated name, but we make link to ubuntu.img
-	do_shell "ln /data/ubuntu.img /data/system.img"
+	#do_shell "ln /data/ubuntu.img /data/system.img"
 }
 
 cleanup()
 {
+	echo "Cleaning up... "
 	mount | grep -q $TMPMOUNT 2>/dev/null && umount $TMPMOUNT
 	cleanup_device
 	rm -rf $WORKDIR
@@ -97,6 +102,9 @@ cleanup_device()
 	[ -e $WORKDIR/device-clean ] && return
 	do_shell "umount /cache/system/ 2>/dev/null && rm -rf /cache/system 2>/dev/null"
 	do_shell "rm -f /recovery/$TARBALL"
+	if [ ! -z "$BUSYBOX_PUSH" ]; then
+		do_shell "rm $BUSYBOX 2>/dev/null"
+	fi
 	[ -e $WORKDIR ] && touch $WORKDIR/device-clean 2>/dev/null || true
 }
 
@@ -109,11 +117,18 @@ usage()
 	-h|--help		this message
 	-c|--custom		path to customization tarball (needs to be tar.xz)
 	-k|--keep-userdata	do not wipe user data on device
-	-w|--wipe-file		absolute path of a file inside the image to wipe (empty)"
+	-w|--wipe-file		absolute path of a file inside the image to wipe (empty)
+	-b|--busybox		path to custom busybox (or toybox) to push/use on device"
 	exit 1
 }
 
 SUDOARGS="$@"
+
+# Holds the path to the busybox binary on the phone we will run commands with. The default one is in the recovery user's PATH, so we'll just leave it as is.
+BUSYBOX="busybox"
+
+# The busybox that we're going to push to the device
+BUSYBOX_PUSH=""
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -128,6 +143,9 @@ while [ $# -gt 0 ]; do
 			;;
 		-w|--wipe-file)
 			[ -n "$2" ] && WIPE_PATH=$2 shift || usage
+			;;
+		-b|--busybox)
+			[ -n "$2" ] && BUSYBOX_PUSH=$2 shift || usage
 			;;
 	esac
 	shift
@@ -181,6 +199,12 @@ check_mounts
 WORKDIR=$(mktemp -d /tmp/rootstock-touch-install.XXXXX)
 TMPMOUNT="$WORKDIR/tmpmount"
 
+if [ ! -z "$BUSYBOX_PUSH" ]; then
+	echo -n "Pushing Busybox to device ... "
+	send_busybox
+	echo "[done]"
+fi
+
 echo -n "transfering rootfs tarball ... "
 adb push $TARPATH /recovery/ >/dev/null 2>&1
 echo "[done]"
@@ -197,7 +221,7 @@ prepare_ubuntu_system
 echo "[done]"
 
 echo -n "unpacking rootfs tarball to system-image ... "
-do_shell "cd /cache/system && zcat /recovery/$TARBALL | tar xf -"
+do_shell "cd /cache/system && $BUSYBOX tar xf /recovery/$TARBALL"
 do_shell "mkdir -p /cache/system/android/firmware"
 do_shell "mkdir -p /cache/system/android/persist"
 do_shell "mkdir -p /cache/system/userdata"
@@ -217,13 +241,13 @@ echo "[done]"
 if [ ! -z "$CUST_TARPATH" ];then
 	echo -n "unpacking custom tarball"
 	do_shell "mkdir -p /cache/system/custom"
-	do_shell "cd /cache && xzcat /recovery/$CUST_TARBALL | tar xf -"
+	do_shell "cd /cache && $BUSYBOX xzcat /recovery/$CUST_TARBALL | $BUSYBOX tar xf -"
 	echo "[done]"
 fi
 
 echo -n "usr.tar.gz ... "
 adb push usr.tar.gz /recovery/ 
-do_shell "cd /cache && zcat /recovery/usr.tar.gz | tar xf -"
+do_shell "cd /cache && $BUSYBOX zcat /recovery/usr.tar.gz | $BUSYBOX tar xf -"
 echo "[done]"
 
 echo -n "adding android system image to installation ... "
@@ -242,3 +266,4 @@ echo "[done]"
 
 echo "rebooting device"
 adb reboot
+

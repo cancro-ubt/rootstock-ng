@@ -5,3 +5,5 @@
 
 # ubports
 wget http://ci.ubports.com/job/vivid-rootfs-armhf/lastSuccessfulBuild/artifact/out/ubports-touch.rootfs-vivid-armhf.tar.gz
+
+wget http://ci.ubports.com/job/xenial-rootfs-armhf/lastSuccessfulBuild/artifact/out/ubports-touch.rootfs-xenial-armhf.tar.gz

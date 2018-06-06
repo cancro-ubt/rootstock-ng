@@ -1,5 +1,5 @@
 
-rm -rf build
+rm -rf build usr.tar.gz
 mkdir build
 
 cp -r ../../device-files/common/* build
